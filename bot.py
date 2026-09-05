@@ -88,11 +88,13 @@ async def say(
     # Turn /n into actual line breaks
     message = message.replace("/n", "\n")
 
+    # Only the person using the command sees this
     await interaction.response.send_message(
         "✅ Message sent!",
         ephemeral=True
     )
 
+    # Send the actual message
     await interaction.channel.send(message)
 
 
@@ -170,13 +172,13 @@ async def createrole(
 
 def get_information_category(guild: discord.Guild):
 
-    # Try to find the exact category name
+    # Exact category name
     category = discord.utils.get(
         guild.categories,
         name="📢 INFORMATION"
     )
 
-    # If it doesn't exist, try without emoji
+    # Backup if emoji isn't included
     if category is None:
         category = discord.utils.get(
             guild.categories,
@@ -194,12 +196,12 @@ def get_staff_overwrites(guild: discord.Guild):
 
     overwrites = {}
 
-    # Hide the ticket from @everyone
+    # Hide from @everyone
     overwrites[guild.default_role] = discord.PermissionOverwrite(
         view_channel=False
     )
 
-    # Add staff roles
+    # Give staff access
     for role in guild.roles:
 
         if role.name.upper() in STAFF_ROLES:
@@ -215,7 +217,7 @@ def get_staff_overwrites(guild: discord.Guild):
 
 
 # =========================
-# TICKET VIEW
+# TICKET PANEL
 # =========================
 
 class TicketView(discord.ui.View):
@@ -324,7 +326,7 @@ class TicketView(discord.ui.View):
 
 
 # =========================
-# CLOSE TICKET VIEW
+# CLOSE TICKET
 # =========================
 
 class CloseTicketView(discord.ui.View):
@@ -346,7 +348,7 @@ class CloseTicketView(discord.ui.View):
         channel = interaction.channel
         user = interaction.user
 
-        # Check if this is a ticket
+        # Make sure this is a ticket
         if not channel.name.startswith("ticket-"):
 
             await interaction.response.send_message(
@@ -365,18 +367,21 @@ class CloseTicketView(discord.ui.View):
             )
         )
 
-        # Also allow the ticket owner to close it
+        # Find ticket owner
         ticket_owner = None
 
         try:
 
-            user_id = int(channel.name.replace("ticket-", ""))
+            user_id = int(
+                channel.name.replace("ticket-", "")
+            )
 
             ticket_owner = channel.guild.get_member(user_id)
 
         except ValueError:
             pass
 
+        # Allow owner or staff to close
         if not is_staff and user != ticket_owner:
 
             await interaction.response.send_message(
@@ -422,7 +427,14 @@ async def ticket(
         text="Kaoz's Chaos"
     )
 
+    # Only YOU see this
     await interaction.response.send_message(
+        "✅ Ticket panel sent!",
+        ephemeral=True
+    )
+
+    # Everyone sees this panel
+    await interaction.channel.send(
         embed=embed,
         view=TicketView()
     )
