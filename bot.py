@@ -53,18 +53,45 @@ STAFF_ROLES = {
 
 
 # =========================
+# TICKET COUNTER
+# =========================
+
+COUNTER_FILE = "ticket_counter.txt"
+
+
+def get_next_ticket_number():
+
+    try:
+        with open(COUNTER_FILE, "r") as file:
+            number = int(file.read().strip())
+
+    except (FileNotFoundError, ValueError):
+        number = 0
+
+    number += 1
+
+    with open(COUNTER_FILE, "w") as file:
+        file.write(str(number))
+
+    return number
+
+
+# =========================
 # BOT READY
 # =========================
 
 @bot.event
 async def on_ready():
+
     try:
+
         synced = await bot.tree.sync()
 
         print(f"Logged in as {bot.user}")
         print(f"Synced {len(synced)} slash command(s)")
 
     except Exception as e:
+
         print(f"Failed to sync commands: {e}")
 
 
@@ -88,13 +115,13 @@ async def say(
     # Turn /n into actual line breaks
     message = message.replace("/n", "\n")
 
-    # Only the person using the command sees this
+    # Only command user sees this
     await interaction.response.send_message(
         "✅ Message sent!",
         ephemeral=True
     )
 
-    # Send the actual message
+    # Send actual message
     await interaction.channel.send(message)
 
 
@@ -117,26 +144,28 @@ async def createrole(
     color: str
 ):
 
-    # Remove #
     color = color.strip().replace("#", "")
 
-    # Check length
     if len(color) != 6:
+
         await interaction.response.send_message(
             "❌ Invalid hex color. Use something like `#ff0000`.",
             ephemeral=True
         )
+
         return
 
-    # Convert hex to number
     try:
+
         color_value = int(color, 16)
 
     except ValueError:
+
         await interaction.response.send_message(
             "❌ Invalid hex color. Use something like `#ff0000`.",
             ephemeral=True
         )
+
         return
 
     try:
@@ -172,14 +201,13 @@ async def createrole(
 
 def get_information_category(guild: discord.Guild):
 
-    # Exact category name
     category = discord.utils.get(
         guild.categories,
         name="📢 INFORMATION"
     )
 
-    # Backup if emoji isn't included
     if category is None:
+
         category = discord.utils.get(
             guild.categories,
             name="INFORMATION"
@@ -196,7 +224,7 @@ def get_staff_overwrites(guild: discord.Guild):
 
     overwrites = {}
 
-    # Hide from @everyone
+    # Hide ticket from everyone
     overwrites[guild.default_role] = discord.PermissionOverwrite(
         view_channel=False
     )
@@ -223,7 +251,9 @@ def get_staff_overwrites(guild: discord.Guild):
 class TicketView(discord.ui.View):
 
     def __init__(self):
+
         super().__init__(timeout=None)
+
 
     @discord.ui.button(
         label="🎫 Create Ticket",
@@ -240,9 +270,11 @@ class TicketView(discord.ui.View):
         user = interaction.user
 
         # Check if user already has a ticket
-        existing_ticket = discord.utils.get(
-            guild.text_channels,
-            name=f"ticket-{user.id}"
+        existing_ticket = discord.utils.find(
+            lambda channel:
+                channel.name.startswith("ticket-")
+                and channel.topic == f"Ticket owner: {user.id}",
+            guild.text_channels
         )
 
         if existing_ticket:
@@ -276,17 +308,23 @@ class TicketView(discord.ui.View):
             read_message_history=True
         )
 
+        # Get next ticket number
+        ticket_number = get_next_ticket_number()
+
+        ticket_name = f"ticket-{ticket_number:03d}"
+
         try:
 
             channel = await guild.create_text_channel(
-                name=f"ticket-{user.id}",
+                name=ticket_name,
                 category=category,
                 overwrites=overwrites,
-                reason=f"Ticket created by {user}"
+                topic=f"Ticket owner: {user.id}",
+                reason=f"Ticket #{ticket_number} created by {user}"
             )
 
             embed = discord.Embed(
-                title="🎫 Support Ticket",
+                title=f"🎫 Ticket #{ticket_number:03d}",
                 description=(
                     f"Welcome {user.mention}!\n\n"
                     "Please explain what you need help with.\n"
@@ -332,7 +370,9 @@ class TicketView(discord.ui.View):
 class CloseTicketView(discord.ui.View):
 
     def __init__(self):
+
         super().__init__(timeout=None)
+
 
     @discord.ui.button(
         label="🔒 Close Ticket",
@@ -348,7 +388,7 @@ class CloseTicketView(discord.ui.View):
         channel = interaction.channel
         user = interaction.user
 
-        # Make sure this is a ticket
+        # Check if ticket
         if not channel.name.startswith("ticket-"):
 
             await interaction.response.send_message(
@@ -358,7 +398,7 @@ class CloseTicketView(discord.ui.View):
 
             return
 
-        # Check staff permissions
+        # Check staff
         is_staff = (
             user.guild_permissions.administrator
             or any(
@@ -370,18 +410,24 @@ class CloseTicketView(discord.ui.View):
         # Find ticket owner
         ticket_owner = None
 
-        try:
+        if channel.topic and channel.topic.startswith("Ticket owner: "):
 
-            user_id = int(
-                channel.name.replace("ticket-", "")
-            )
+            try:
 
-            ticket_owner = channel.guild.get_member(user_id)
+                user_id = int(
+                    channel.topic.replace(
+                        "Ticket owner: ",
+                        ""
+                    )
+                )
 
-        except ValueError:
-            pass
+                ticket_owner = channel.guild.get_member(user_id)
 
-        # Allow owner or staff to close
+            except ValueError:
+
+                pass
+
+        # Owner or staff can close
         if not is_staff and user != ticket_owner:
 
             await interaction.response.send_message(
@@ -427,13 +473,13 @@ async def ticket(
         text="Kaoz's Chaos"
     )
 
-    # Only YOU see this
+    # Only command user sees this
     await interaction.response.send_message(
         "✅ Ticket panel sent!",
         ephemeral=True
     )
 
-    # Everyone sees this panel
+    # Everyone sees the panel
     await interaction.channel.send(
         embed=embed,
         view=TicketView()
