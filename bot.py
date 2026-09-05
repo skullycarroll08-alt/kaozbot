@@ -21,16 +21,17 @@ bot = commands.Bot(
 
 def admin_or_higher():
     async def predicate(interaction: discord.Interaction):
+
         # Server owner always has access
         if interaction.guild and interaction.user.id == interaction.guild.owner_id:
             return True
 
-        # ADMINISTRATOR permission has access
+        # Discord Administrator permission
         if interaction.user.guild_permissions.administrator:
             return True
 
-        # Check for a role named ADMIN or JUSTKAOZ
-        allowed_roles = {"ADMIN", "JUSTKAOZ"}
+        # JUSTKAOZ and ADMIN roles
+        allowed_roles = {"JUSTKAOZ", "ADMIN"}
 
         return any(
             role.name.upper() in allowed_roles
@@ -41,6 +42,17 @@ def admin_or_higher():
 
 
 # =========================
+# STAFF ROLES
+# =========================
+
+STAFF_ROLES = {
+    "JUSTKAOZ",
+    "ADMIN",
+    "MOD"
+}
+
+
+# =========================
 # BOT READY
 # =========================
 
@@ -48,8 +60,10 @@ def admin_or_higher():
 async def on_ready():
     try:
         synced = await bot.tree.sync()
+
         print(f"Logged in as {bot.user}")
         print(f"Synced {len(synced)} slash command(s)")
+
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
@@ -70,16 +84,15 @@ async def say(
     interaction: discord.Interaction,
     message: str
 ):
+
     # Turn /n into actual line breaks
     message = message.replace("/n", "\n")
 
-    # Confirm privately
     await interaction.response.send_message(
         "✅ Message sent!",
         ephemeral=True
     )
 
-    # Send the actual message
     await interaction.channel.send(message)
 
 
@@ -101,10 +114,11 @@ async def createrole(
     name: str,
     color: str
 ):
-    # Clean up the hex code
+
+    # Remove #
     color = color.strip().replace("#", "")
 
-    # Make sure it is exactly 6 characters
+    # Check length
     if len(color) != 6:
         await interaction.response.send_message(
             "❌ Invalid hex color. Use something like `#ff0000`.",
@@ -112,8 +126,10 @@ async def createrole(
         )
         return
 
+    # Convert hex to number
     try:
         color_value = int(color, 16)
+
     except ValueError:
         await interaction.response.send_message(
             "❌ Invalid hex color. Use something like `#ff0000`.",
@@ -122,6 +138,7 @@ async def createrole(
         return
 
     try:
+
         role = await interaction.guild.create_role(
             name=name,
             color=discord.Color(color_value),
@@ -129,20 +146,286 @@ async def createrole(
         )
 
         await interaction.response.send_message(
-            f"✅ Created role **{role.name}** with color `#{color.upper()}**."
+            f"✅ Created role **{role.name}** with color `#{color.upper()}`."
         )
 
     except discord.Forbidden:
+
         await interaction.response.send_message(
             "❌ I don't have permission to create roles.",
             ephemeral=True
         )
 
     except discord.HTTPException as e:
+
         await interaction.response.send_message(
             f"❌ Discord returned an error: `{e}`",
             ephemeral=True
         )
+
+
+# =========================
+# FIND INFORMATION CATEGORY
+# =========================
+
+def get_information_category(guild: discord.Guild):
+
+    # Try to find the exact category name
+    category = discord.utils.get(
+        guild.categories,
+        name="📢 INFORMATION"
+    )
+
+    # If it doesn't exist, try without emoji
+    if category is None:
+        category = discord.utils.get(
+            guild.categories,
+            name="INFORMATION"
+        )
+
+    return category
+
+
+# =========================
+# FIND STAFF ROLES
+# =========================
+
+def get_staff_overwrites(guild: discord.Guild):
+
+    overwrites = {}
+
+    # Hide the ticket from @everyone
+    overwrites[guild.default_role] = discord.PermissionOverwrite(
+        view_channel=False
+    )
+
+    # Add staff roles
+    for role in guild.roles:
+
+        if role.name.upper() in STAFF_ROLES:
+
+            overwrites[role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_messages=True
+            )
+
+    return overwrites
+
+
+# =========================
+# TICKET VIEW
+# =========================
+
+class TicketView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🎫 Create Ticket",
+        style=discord.ButtonStyle.green,
+        custom_id="create_ticket"
+    )
+    async def create_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        guild = interaction.guild
+        user = interaction.user
+
+        # Check if user already has a ticket
+        existing_ticket = discord.utils.get(
+            guild.text_channels,
+            name=f"ticket-{user.id}"
+        )
+
+        if existing_ticket:
+
+            await interaction.response.send_message(
+                f"❌ You already have a ticket: {existing_ticket.mention}",
+                ephemeral=True
+            )
+
+            return
+
+        # Find INFORMATION category
+        category = get_information_category(guild)
+
+        if category is None:
+
+            await interaction.response.send_message(
+                "❌ I couldn't find the **📢 INFORMATION** category.",
+                ephemeral=True
+            )
+
+            return
+
+        # Get staff permissions
+        overwrites = get_staff_overwrites(guild)
+
+        # Give ticket creator access
+        overwrites[user] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True
+        )
+
+        try:
+
+            channel = await guild.create_text_channel(
+                name=f"ticket-{user.id}",
+                category=category,
+                overwrites=overwrites,
+                reason=f"Ticket created by {user}"
+            )
+
+            embed = discord.Embed(
+                title="🎫 Support Ticket",
+                description=(
+                    f"Welcome {user.mention}!\n\n"
+                    "Please explain what you need help with.\n"
+                    "A staff member will assist you soon."
+                ),
+                color=discord.Color.blurple()
+            )
+
+            embed.set_footer(
+                text="Kaoz's Chaos"
+            )
+
+            await channel.send(
+                content=user.mention,
+                embed=embed,
+                view=CloseTicketView()
+            )
+
+            await interaction.response.send_message(
+                f"✅ Your ticket has been created: {channel.mention}",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ I don't have permission to create the ticket.",
+                ephemeral=True
+            )
+
+        except discord.HTTPException as e:
+
+            await interaction.response.send_message(
+                f"❌ Discord returned an error: `{e}`",
+                ephemeral=True
+            )
+
+
+# =========================
+# CLOSE TICKET VIEW
+# =========================
+
+class CloseTicketView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🔒 Close Ticket",
+        style=discord.ButtonStyle.red,
+        custom_id="close_ticket"
+    )
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        channel = interaction.channel
+        user = interaction.user
+
+        # Check if this is a ticket
+        if not channel.name.startswith("ticket-"):
+
+            await interaction.response.send_message(
+                "❌ This isn't a ticket channel.",
+                ephemeral=True
+            )
+
+            return
+
+        # Check staff permissions
+        is_staff = (
+            user.guild_permissions.administrator
+            or any(
+                role.name.upper() in STAFF_ROLES
+                for role in user.roles
+            )
+        )
+
+        # Also allow the ticket owner to close it
+        ticket_owner = None
+
+        try:
+
+            user_id = int(channel.name.replace("ticket-", ""))
+
+            ticket_owner = channel.guild.get_member(user_id)
+
+        except ValueError:
+            pass
+
+        if not is_staff and user != ticket_owner:
+
+            await interaction.response.send_message(
+                "❌ You don't have permission to close this ticket.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.send_message(
+            "🔒 Closing ticket...",
+            ephemeral=True
+        )
+
+        await channel.delete(
+            reason=f"Ticket closed by {user}"
+        )
+
+
+# =========================
+# /ticket
+# =========================
+
+@bot.tree.command(
+    name="ticket",
+    description="Create the ticket panel"
+)
+@admin_or_higher()
+async def ticket(
+    interaction: discord.Interaction
+):
+
+    embed = discord.Embed(
+        title="🎫 Need Help?",
+        description=(
+            "Click the button below to create a private support ticket.\n\n"
+            "A ticket will be created inside **📢 INFORMATION**."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text="Kaoz's Chaos"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=TicketView()
+    )
 
 
 # =========================
@@ -154,17 +437,22 @@ async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError
 ):
+
     if isinstance(error, app_commands.CheckFailure):
+
         if not interaction.response.is_done():
+
             await interaction.response.send_message(
                 "❌ Only **ADMIN** or **JUSTKAOZ** can use bot commands.",
                 ephemeral=True
             )
+
         return
 
     print(f"Command error: {error}")
 
     if not interaction.response.is_done():
+
         await interaction.response.send_message(
             "❌ Something went wrong while running the command.",
             ephemeral=True
@@ -178,6 +466,11 @@ async def on_app_command_error(
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
-    print("ERROR: DISCORD_TOKEN environment variable is not set!")
+
+    print(
+        "ERROR: DISCORD_TOKEN environment variable is not set!"
+    )
+
 else:
+
     bot.run(TOKEN)
