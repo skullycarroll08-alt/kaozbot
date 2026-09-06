@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import os
+import json
+from datetime import timedelta
 
 # =========================
 # BOT SETUP
@@ -14,32 +16,12 @@ bot = commands.Bot(
     intents=intents
 )
 
-
 # =========================
-# ADMIN+ ONLY CHECK
+# FILES
 # =========================
 
-def admin_or_higher():
-    async def predicate(interaction: discord.Interaction):
-
-        # Server owner always has access
-        if interaction.guild and interaction.user.id == interaction.guild.owner_id:
-            return True
-
-        # Discord Administrator permission
-        if interaction.user.guild_permissions.administrator:
-            return True
-
-        # JUSTKAOZ and ADMIN roles
-        allowed_roles = {"JUSTKAOZ", "ADMIN"}
-
-        return any(
-            role.name.upper() in allowed_roles
-            for role in interaction.user.roles
-        )
-
-    return app_commands.check(predicate)
-
+COUNTER_FILE = "ticket_counter.txt"
+WARNINGS_FILE = "warnings.json"
 
 # =========================
 # STAFF ROLES
@@ -51,13 +33,68 @@ STAFF_ROLES = {
     "MOD"
 }
 
+# =========================
+# ADMIN+ CHECK
+# =========================
+
+def admin_or_higher():
+    async def predicate(interaction: discord.Interaction):
+
+        if not interaction.guild:
+            return False
+
+        # Server owner
+        if interaction.user.id == interaction.guild.owner_id:
+            return True
+
+        # Discord Administrator
+        if interaction.user.guild_permissions.administrator:
+            return True
+
+        # JUSTKAOZ / ADMIN
+        allowed_roles = {
+            "JUSTKAOZ",
+            "ADMIN"
+        }
+
+        return any(
+            role.name.upper() in allowed_roles
+            for role in interaction.user.roles
+        )
+
+    return app_commands.check(predicate)
+
+
+# =========================
+# LOAD WARNINGS
+# =========================
+
+def load_warnings():
+
+    try:
+        with open(WARNINGS_FILE, "r") as file:
+            return json.load(file)
+
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+# =========================
+# SAVE WARNINGS
+# =========================
+
+def save_warnings(data):
+
+    with open(WARNINGS_FILE, "w") as file:
+        json.dump(data, file, indent=4)
+
+
+warnings_data = load_warnings()
+
 
 # =========================
 # TICKET COUNTER
 # =========================
-
-COUNTER_FILE = "ticket_counter.txt"
-
 
 def get_next_ticket_number():
 
@@ -96,6 +133,30 @@ async def on_ready():
 
 
 # =========================
+# ROLE HIERARCHY CHECK
+# =========================
+
+def can_moderate(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    if member.id == interaction.user.id:
+        return False
+
+    if member.id == interaction.guild.owner_id:
+        return False
+
+    if member.top_role >= interaction.user.top_role:
+        return False
+
+    if member.top_role >= interaction.guild.me.top_role:
+        return False
+
+    return True
+
+
+# =========================
 # /say
 # =========================
 
@@ -112,16 +173,13 @@ async def say(
     message: str
 ):
 
-    # Turn /n into actual line breaks
     message = message.replace("/n", "\n")
 
-    # Only command user sees this
     await interaction.response.send_message(
         "✅ Message sent!",
         ephemeral=True
     )
 
-    # Send actual message
     await interaction.channel.send(message)
 
 
@@ -156,7 +214,6 @@ async def createrole(
         return
 
     try:
-
         color_value = int(color, 16)
 
     except ValueError:
@@ -196,10 +253,10 @@ async def createrole(
 
 
 # =========================
-# FIND INFORMATION CATEGORY
+# INFORMATION CATEGORY
 # =========================
 
-def get_information_category(guild: discord.Guild):
+def get_information_category(guild):
 
     category = discord.utils.get(
         guild.categories,
@@ -217,19 +274,17 @@ def get_information_category(guild: discord.Guild):
 
 
 # =========================
-# FIND STAFF ROLES
+# STAFF PERMISSIONS
 # =========================
 
-def get_staff_overwrites(guild: discord.Guild):
+def get_staff_overwrites(guild):
 
     overwrites = {}
 
-    # Hide ticket from everyone
     overwrites[guild.default_role] = discord.PermissionOverwrite(
         view_channel=False
     )
 
-    # Give staff access
     for role in guild.roles:
 
         if role.name.upper() in STAFF_ROLES:
@@ -245,7 +300,7 @@ def get_staff_overwrites(guild: discord.Guild):
 
 
 # =========================
-# TICKET PANEL
+# CREATE TICKET BUTTON
 # =========================
 
 class TicketView(discord.ui.View):
@@ -253,7 +308,6 @@ class TicketView(discord.ui.View):
     def __init__(self):
 
         super().__init__(timeout=None)
-
 
     @discord.ui.button(
         label="🎫 Create Ticket",
@@ -269,7 +323,7 @@ class TicketView(discord.ui.View):
         guild = interaction.guild
         user = interaction.user
 
-        # Check if user already has a ticket
+        # Check existing ticket
         existing_ticket = discord.utils.find(
             lambda channel:
                 channel.name.startswith("ticket-")
@@ -286,7 +340,6 @@ class TicketView(discord.ui.View):
 
             return
 
-        # Find INFORMATION category
         category = get_information_category(guild)
 
         if category is None:
@@ -298,17 +351,14 @@ class TicketView(discord.ui.View):
 
             return
 
-        # Get staff permissions
         overwrites = get_staff_overwrites(guild)
 
-        # Give ticket creator access
         overwrites[user] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
             read_message_history=True
         )
 
-        # Get next ticket number
         ticket_number = get_next_ticket_number()
 
         ticket_name = f"ticket-{ticket_number:03d}"
@@ -355,13 +405,6 @@ class TicketView(discord.ui.View):
                 ephemeral=True
             )
 
-        except discord.HTTPException as e:
-
-            await interaction.response.send_message(
-                f"❌ Discord returned an error: `{e}`",
-                ephemeral=True
-            )
-
 
 # =========================
 # CLOSE TICKET
@@ -372,7 +415,6 @@ class CloseTicketView(discord.ui.View):
     def __init__(self):
 
         super().__init__(timeout=None)
-
 
     @discord.ui.button(
         label="🔒 Close Ticket",
@@ -388,7 +430,6 @@ class CloseTicketView(discord.ui.View):
         channel = interaction.channel
         user = interaction.user
 
-        # Check if ticket
         if not channel.name.startswith("ticket-"):
 
             await interaction.response.send_message(
@@ -398,7 +439,6 @@ class CloseTicketView(discord.ui.View):
 
             return
 
-        # Check staff
         is_staff = (
             user.guild_permissions.administrator
             or any(
@@ -407,7 +447,6 @@ class CloseTicketView(discord.ui.View):
             )
         )
 
-        # Find ticket owner
         ticket_owner = None
 
         if channel.topic and channel.topic.startswith("Ticket owner: "):
@@ -424,10 +463,8 @@ class CloseTicketView(discord.ui.View):
                 ticket_owner = channel.guild.get_member(user_id)
 
             except ValueError:
-
                 pass
 
-        # Owner or staff can close
         if not is_staff and user != ticket_owner:
 
             await interaction.response.send_message(
@@ -473,17 +510,420 @@ async def ticket(
         text="Kaoz's Chaos"
     )
 
-    # Only command user sees this
     await interaction.response.send_message(
         "✅ Ticket panel sent!",
         ephemeral=True
     )
 
-    # Everyone sees the panel
     await interaction.channel.send(
         embed=embed,
         view=TicketView()
     )
+
+
+# =========================
+# /WARN
+# =========================
+
+@bot.tree.command(
+    name="warn",
+    description="Warn a member"
+)
+@app_commands.describe(
+    member="The member to warn",
+    reason="The reason for the warning"
+)
+@admin_or_higher()
+async def warn(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str
+):
+
+    if not can_moderate(interaction, member):
+
+        await interaction.response.send_message(
+            "❌ You cannot warn this member because of role hierarchy.",
+            ephemeral=True
+        )
+
+        return
+
+    guild_id = str(interaction.guild.id)
+    user_id = str(member.id)
+
+    if guild_id not in warnings_data:
+        warnings_data[guild_id] = {}
+
+    if user_id not in warnings_data[guild_id]:
+        warnings_data[guild_id][user_id] = []
+
+    warnings_data[guild_id][user_id].append({
+        "reason": reason,
+        "moderator": interaction.user.id
+    })
+
+    save_warnings(warnings_data)
+
+    warning_count = len(
+        warnings_data[guild_id][user_id]
+    )
+
+    # 3 warnings = 12 hour timeout
+    if warning_count >= 3:
+
+        try:
+
+            await member.timeout(
+                timedelta(hours=12),
+                reason="Reached 3 warnings"
+            )
+
+            warnings_data[guild_id][user_id] = []
+
+            save_warnings(warnings_data)
+
+            await interaction.response.send_message(
+                f"⚠️ {member.mention} received warning **#{warning_count}**.\n"
+                f"🚨 They reached 3 warnings and were automatically "
+                f"timed out for **12 hours**.\n"
+                f"🔄 Their warnings have been reset."
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                f"⚠️ {member.mention} received warning #{warning_count}, "
+                "but I couldn't apply the 12-hour timeout.",
+                ephemeral=True
+            )
+
+        return
+
+    await interaction.response.send_message(
+        f"⚠️ {member.mention} has been warned.\n"
+        f"**Warnings:** {warning_count}/3\n"
+        f"**Reason:** {reason}"
+    )
+
+
+# =========================
+# /UNWARN
+# =========================
+
+@bot.tree.command(
+    name="unwarn",
+    description="Remove one warning from a member"
+)
+@app_commands.describe(
+    member="The member to remove a warning from"
+)
+@admin_or_higher()
+async def unwarn(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    guild_id = str(interaction.guild.id)
+    user_id = str(member.id)
+
+    if (
+        guild_id not in warnings_data
+        or user_id not in warnings_data[guild_id]
+        or len(warnings_data[guild_id][user_id]) == 0
+    ):
+
+        await interaction.response.send_message(
+            f"❌ {member.mention} has no warnings.",
+            ephemeral=True
+        )
+
+        return
+
+    # Remove one warning
+    warnings_data[guild_id][user_id].pop()
+
+    # Clean empty data
+    if len(warnings_data[guild_id][user_id]) == 0:
+        del warnings_data[guild_id][user_id]
+
+    save_warnings(warnings_data)
+
+    remaining = len(
+        warnings_data.get(guild_id, {}).get(user_id, [])
+    )
+
+    await interaction.response.send_message(
+        f"✅ Removed one warning from {member.mention}.\n"
+        f"**Warnings remaining:** {remaining}/3"
+    )
+
+
+# =========================
+# /WARNINGS
+# =========================
+
+@bot.tree.command(
+    name="warnings",
+    description="View a member's warnings"
+)
+@app_commands.describe(
+    member="The member to check"
+)
+@admin_or_higher()
+async def warnings(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    guild_id = str(interaction.guild.id)
+    user_id = str(member.id)
+
+    user_warnings = warnings_data.get(
+        guild_id,
+        {}
+    ).get(
+        user_id,
+        []
+    )
+
+    if not user_warnings:
+
+        await interaction.response.send_message(
+            f"✅ **{member.display_name}** has no warnings."
+        )
+
+        return
+
+    embed = discord.Embed(
+        title=f"⚠️ Warnings for {member.display_name}",
+        description=f"**Total:** {len(user_warnings)}/3",
+        color=discord.Color.orange()
+    )
+
+    for index, warning in enumerate(user_warnings, start=1):
+
+        moderator = interaction.guild.get_member(
+            warning.get("moderator")
+        )
+
+        moderator_name = (
+            moderator.display_name
+            if moderator
+            else "Unknown"
+        )
+
+        embed.add_field(
+            name=f"Warning #{index}",
+            value=(
+                f"**Reason:** {warning.get('reason', 'No reason')}\n"
+                f"**Moderator:** {moderator_name}"
+            ),
+            inline=False
+        )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================
+# /TIMEOUT
+# =========================
+
+@bot.tree.command(
+    name="timeout",
+    description="Timeout a member"
+)
+@app_commands.describe(
+    member="The member to timeout",
+    duration="Duration in minutes",
+    reason="Reason for the timeout"
+)
+@admin_or_higher()
+async def timeout(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    duration: int,
+    reason: str = "No reason provided"
+):
+
+    if duration < 1 or duration > 40320:
+
+        await interaction.response.send_message(
+            "❌ Duration must be between 1 and 40320 minutes.",
+            ephemeral=True
+        )
+
+        return
+
+    if not can_moderate(interaction, member):
+
+        await interaction.response.send_message(
+            "❌ You cannot timeout this member because of role hierarchy.",
+            ephemeral=True
+        )
+
+        return
+
+    try:
+
+        await member.timeout(
+            timedelta(minutes=duration),
+            reason=reason
+        )
+
+        await interaction.response.send_message(
+            f"🔇 {member.mention} has been timed out for "
+            f"**{duration} minutes**.\n"
+            f"**Reason:** {reason}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ I don't have permission to timeout this member.",
+            ephemeral=True
+        )
+
+
+# =========================
+# /UNTIMEOUT
+# =========================
+
+@bot.tree.command(
+    name="untimeout",
+    description="Remove a timeout from a member"
+)
+@app_commands.describe(
+    member="The member to untimeout"
+)
+@admin_or_higher()
+async def untimeout(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+
+    if not can_moderate(interaction, member):
+
+        await interaction.response.send_message(
+            "❌ You cannot untimeout this member because of role hierarchy.",
+            ephemeral=True
+        )
+
+        return
+
+    try:
+
+        await member.timeout(
+            None,
+            reason=f"Timeout removed by {interaction.user}"
+        )
+
+        await interaction.response.send_message(
+            f"🔊 {member.mention} is no longer timed out."
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ I don't have permission to remove this timeout.",
+            ephemeral=True
+        )
+
+
+# =========================
+# /KICK
+# =========================
+
+@bot.tree.command(
+    name="kick",
+    description="Kick a member"
+)
+@app_commands.describe(
+    member="The member to kick",
+    reason="Reason for the kick"
+)
+@admin_or_higher()
+async def kick(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "No reason provided"
+):
+
+    if not can_moderate(interaction, member):
+
+        await interaction.response.send_message(
+            "❌ You cannot kick this member because of role hierarchy.",
+            ephemeral=True
+        )
+
+        return
+
+    try:
+
+        await member.kick(
+            reason=reason
+        )
+
+        await interaction.response.send_message(
+            f"👢 {member.mention} has been kicked.\n"
+            f"**Reason:** {reason}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ I don't have permission to kick this member.",
+            ephemeral=True
+        )
+
+
+# =========================
+# /BAN
+# =========================
+
+@bot.tree.command(
+    name="ban",
+    description="Ban a member"
+)
+@app_commands.describe(
+    member="The member to ban",
+    reason="Reason for the ban"
+)
+@admin_or_higher()
+async def ban(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "No reason provided"
+):
+
+    if not can_moderate(interaction, member):
+
+        await interaction.response.send_message(
+            "❌ You cannot ban this member because of role hierarchy.",
+            ephemeral=True
+        )
+
+        return
+
+    try:
+
+        await member.ban(
+            reason=reason
+        )
+
+        await interaction.response.send_message(
+            f"🔨 {member.mention} has been banned.\n"
+            f"**Reason:** {reason}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ I don't have permission to ban this member.",
+            ephemeral=True
+        )
 
 
 # =========================
