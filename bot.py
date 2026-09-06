@@ -925,6 +925,81 @@ async def ban(
             ephemeral=True
         )
 
+# =========================
+# /CLEAR
+# =========================
+
+@bot.tree.command(
+    name="clear",
+    description="Delete a member's messages from the last X hours"
+)
+@app_commands.describe(
+    member="The member whose messages should be deleted",
+    time="How many hours back to search"
+)
+@admin_or_higher()
+async def clear(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    time: int
+):
+
+    if time < 1 or time > 336:
+        await interaction.response.send_message(
+            "❌ Time must be between 1 and 336 hours (14 days).",
+            ephemeral=True
+        )
+        return
+
+    # Tell Discord we're processing
+    await interaction.response.defer(ephemeral=True)
+
+    # Calculate how far back to search
+    cutoff = discord.utils.utcnow() - timedelta(hours=time)
+
+    deleted_messages = []
+
+    try:
+        async for message in interaction.channel.history(
+            after=cutoff,
+            oldest_first=False
+        ):
+            if message.author.id == member.id:
+                deleted_messages.append(message)
+
+        # Delete messages individually so we only remove
+        # messages from the selected member
+        for message in deleted_messages:
+            try:
+                await message.delete()
+            except discord.NotFound:
+                pass
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "❌ I don't have permission to delete messages.",
+                    ephemeral=True
+                )
+                return
+
+        await interaction.followup.send(
+            f"🧹 Deleted **{len(deleted_messages)}** message(s) "
+            f"from {member.mention} in the last **{time} hour(s)**.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ I don't have permission to read/delete messages "
+            "in this channel.",
+            ephemeral=True
+        )
+
+    except discord.HTTPException as e:
+        await interaction.followup.send(
+            f"❌ Discord returned an error: `{e}`",
+            ephemeral=True
+        )
+
 
 # =========================
 # ERROR HANDLER
