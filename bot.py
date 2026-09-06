@@ -1000,6 +1000,86 @@ async def clear(
             ephemeral=True
         )
 
+# =========================
+# /LOCK
+# =========================
+
+@bot.tree.command(
+    name="lock",
+    description="Lock the current channel so only JUSTKAOZ can talk"
+)
+@admin_or_higher()
+async def lock(
+    interaction: discord.Interaction
+):
+
+    guild = interaction.guild
+    channel = interaction.channel
+
+    # Only JUSTKAOZ can use /lock
+    is_justkaoz = any(
+        role.name.upper() == "JUSTKAOZ"
+        for role in interaction.user.roles
+    )
+
+    # Server owner also counts as JUSTKAOZ
+    if interaction.user.id == guild.owner_id:
+        is_justkaoz = True
+
+    if not is_justkaoz:
+        await interaction.response.send_message(
+            "❌ Only **JUSTKAOZ** can lock channels.",
+            ephemeral=True
+        )
+        return
+
+    # Find JUSTKAOZ role
+    justkaoz_role = discord.utils.find(
+        lambda role: role.name.upper() == "JUSTKAOZ",
+        guild.roles
+    )
+
+    if justkaoz_role is None:
+        await interaction.response.send_message(
+            "❌ I couldn't find the **JUSTKAOZ** role.",
+            ephemeral=True
+        )
+        return
+
+    try:
+
+        # Everyone can still see the channel but cannot talk
+        await channel.set_permissions(
+            guild.default_role,
+            send_messages=False
+        )
+
+        # JUSTKAOZ can still talk
+        await channel.set_permissions(
+            justkaoz_role,
+            send_messages=True
+        )
+
+        await interaction.response.send_message(
+            "🔒 **Channel locked!**\n"
+            "Everyone can still see this channel, but only "
+            "**JUSTKAOZ** can talk."
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ I don't have permission to change this channel's permissions.",
+            ephemeral=True
+        )
+
+    except discord.HTTPException as e:
+
+        await interaction.response.send_message(
+            f"❌ Discord returned an error: `{e}`",
+            ephemeral=True
+        )
+
 
 # =========================
 # ERROR HANDLER
