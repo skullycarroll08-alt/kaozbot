@@ -1080,6 +1080,71 @@ async def lock(
             ephemeral=True
         )
 
+# =========================
+# /8BALL
+# =========================
+
+import random
+
+EIGHT_BALL_RESPONSES = [
+    "🎱 Yes!",
+    "🎱 Definitely!",
+    "🎱 Absolutely!",
+    "🎱 Most likely!",
+    "🎱 It looks good!",
+    "🎱 Signs point to yes.",
+    "🎱 Probably!",
+    "🎱 Maybe...",
+    "🎱 Ask again later.",
+    "🎱 I'm not sure.",
+    "🎱 Hard to tell.",
+    "🎱 Probably not.",
+    "🎱 I wouldn't count on it.",
+    "🎱 Signs point to no.",
+    "🎱 No.",
+    "🎱 Definitely not!"
+]
+
+
+@bot.tree.command(
+    name="8ball",
+    description="Ask the Magic 8-Ball a question"
+)
+@app_commands.describe(
+    question="The question you want to ask the Magic 8-Ball"
+)
+async def eight_ball(
+    interaction: discord.Interaction,
+    question: str
+):
+
+    response = random.choice(EIGHT_BALL_RESPONSES)
+
+    embed = discord.Embed(
+        title="🎱 Magic 8-Ball",
+        color=discord.Color.dark_red()
+    )
+
+    embed.add_field(
+        name="❓ Question",
+        value=question,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔮 Answer",
+        value=response,
+        inline=False
+    )
+
+    embed.set_footer(
+        text=f"Asked by {interaction.user.display_name}"
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
 
 # =========================
 # ERROR HANDLER
